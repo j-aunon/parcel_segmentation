@@ -10,16 +10,12 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgb
 
 # --- CONFIG ---
-# Download SIGPAC SHP for your comarca from:
-# https://agricultura.gencat.cat/ca/ambits/desenvolupament-rural/sigpac/descarregues/
-# Pick "Recintos" (not "Parcelas") for the comarca you want, campaign 2025.
-SIGPAC_SHP = "SIGPAC_33_Segria_2025_shp/SIGPAC_33_Segria.shp"  # update with your filename
+SIGPAC_SHP = "SIGPAC_33_Segria_2025_shp/SIGPAC_33_Segria.shp"
 
-BBOX = (295000, 4610000, 297000, 4612000)  # EPSG:25831, meters
-IMG_SIZE = 1024
+BBOX = (295000, 4610000, 295256, 4610256)  # EPSG:25831, meters — 256m x 256m test
+IMG_SIZE = 1024                            # 0.25 m/pixel (same GSD as PNOA/paper)
 OUT_DIR = "dataset_lleida"
 
-# SIGPAC use codes → (class_id, hex_color)
 CLASSES = {
     "TA": (1,  "#FFD700"), "TH": (1,  "#FFD700"),  # arable land
     "VI": (2,  "#800080"),                           # vineyard
@@ -38,11 +34,15 @@ CLASSES = {
 
 def get_pnoa(bbox, size=IMG_SIZE):
     r = requests.get("https://www.ign.es/wms-inspire/pnoa-ma", params={
-        "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-        "LAYERS": "OI.OrthoimageCoverage", "STYLES": "",
-        "CRS": "EPSG:25831",
-        "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
-        "WIDTH": size, "HEIGHT": size, "FORMAT": "image/png",
+        "SERVICE": "WMS",                                    # protocol
+        "VERSION": "1.3.0",                                  # WMS version
+        "REQUEST": "GetMap",                                 # request an image
+        "LAYERS": "OI.OrthoimageCoverage",                   # INSPIRE layer name for PNOA orthophotos
+        "STYLES": "",                                        # default style
+        "CRS": "EPSG:25831",                                 # UTM zone 31N (metric system used in Spain)
+        "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",  # xmin,ymin,xmax,ymax in meters
+        "WIDTH": size, "HEIGHT": size,                       # output image size in pixels
+        "FORMAT": "image/png",                               # output format
     }, timeout=60)
     r.raise_for_status()
     return np.array(Image.open(BytesIO(r.content)).convert("RGB"))
