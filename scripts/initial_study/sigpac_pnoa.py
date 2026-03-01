@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgb
 
 # --- CONFIG ---
-SIGPAC_SHP = "SIGPAC_33_Segria_2025_shp/SIGPAC_33_Segria.shp"
+SIGPAC_SHP = "/home/jaunon/Projects/parcel_segmentation/data/sigpac/2025/Segria/SIGPAC_33_Segria.shp"
 
 BBOX = (295000, 4610000, 295256, 4610256)  # EPSG:25831, meters — 256m x 256m test
 IMG_SIZE = 1024                            # 0.25 m/pixel (same GSD as PNOA/paper)
