@@ -1,13 +1,3 @@
-"""build_dataset.py — semantic segmentation dataset from PNOA + SIGPAC (Lleida)
-
-Output: data/dataset/{images,masks}/{train,val,test}/*.png
-        data/dataset/classes.txt   ← SIGPAC codes actually present in the data
-
-Spatial split: territory divided into 10 km blocks, randomly assigned to
-train/val/test. Patches (256 m, 1024 px) sampled at random within blocks.
-Year alignment: PNOA acquisition year must match available SIGPAC year.
-"""
-
 import os, time, random
 import requests, numpy as np, geopandas as gpd
 from PIL import Image
@@ -74,8 +64,10 @@ def make_mask(gdf, use_col, bbox, code_to_id):
 
 def make_block_map(bounds, rng):
     xmin, ymin, xmax, ymax = bounds
-    blocks = [(x, y) for x in np.arange(xmin, xmax, BLOCK_M)
-                      for y in np.arange(ymin, ymax, BLOCK_M)]
+    x0 = (xmin // BLOCK_M) * BLOCK_M
+    y0 = (ymin // BLOCK_M) * BLOCK_M
+    blocks = [(x, y) for x in np.arange(x0, xmax, BLOCK_M)
+                      for y in np.arange(y0, ymax, BLOCK_M)]
     rng.shuffle(blocks)
     n, cut1 = len(blocks), int(len(blocks) * SPLITS["train"])
     cut2 = cut1 + int(n * SPLITS["val"])
@@ -108,25 +100,37 @@ if __name__ == "__main__":
             continue
 
         base_gdf = sigpac[min(sigpac)][0]
-        union, bounds = base_gdf.union_all(), base_gdf.total_bounds
+        bounds = base_gdf.total_bounds
         block_map = make_block_map(bounds, rng)
+
+        # Precompute polygon list weighted by area for direct spatial sampling
+        polys = [g for g in base_gdf.geometry if g is not None and not g.is_empty and g.is_valid]
+        poly_areas = [g.area for g in polys]
+
         saved, attempts = 0, 0
         print(f"\n[{comarca}]  SIGPAC years: {sorted(sigpac)}")
 
+        skip = {"outside": 0, "no_block": 0, "block_edge": 0, "pnoa_fail": 0, "year_mismatch": 0, "empty_mask": 0, "img_fail": 0}
         while saved < N_SAMPLES and attempts < N_SAMPLES * 6:
             attempts += 1
-            cx = rng.uniform(bounds[0] + margin, bounds[2] - margin)
-            cy = rng.uniform(bounds[1] + margin, bounds[3] - margin)
-            if not union.contains(Point(cx, cy)):
-                continue
+            # Sample a polygon weighted by area, then a point inside it
+            [poly] = rng.choices(polys, weights=poly_areas, k=1)
+            px0, py0, px1, py1 = poly.bounds
+            for _ in range(20):
+                cx = rng.uniform(px0, px1)
+                cy = rng.uniform(py0, py1)
+                if poly.contains(Point(cx, cy)):
+                    break
+            else:
+                skip["outside"] += 1; continue
 
             bx, by = (cx // BLOCK_M) * BLOCK_M, (cy // BLOCK_M) * BLOCK_M
             split = block_map.get((float(bx), float(by)))
             if not split:
-                continue
+                skip["no_block"] += 1; continue
             if not (bx + margin <= cx <= bx + BLOCK_M - margin and
                     by + margin <= cy <= by + BLOCK_M - margin):
-                continue
+                skip["block_edge"] += 1; continue
 
             bbox = (cx - margin, cy - margin, cx + margin, cy + margin)
 
@@ -134,20 +138,20 @@ if __name__ == "__main__":
                 pnoa_year = query_pnoa_year(cx, cy)
                 time.sleep(0.05)
             except Exception:
-                continue
+                skip["pnoa_fail"] += 1; continue
             if pnoa_year not in sigpac:
-                continue
+                skip["year_mismatch"] += 1; continue
 
             gdf, use_col = sigpac[pnoa_year]
             mask = make_mask(gdf, use_col, bbox, code_to_id)
             if mask is None:
-                continue
+                skip["empty_mask"] += 1; continue
 
             try:
                 img = download_pnoa(bbox)
                 time.sleep(0.05)
             except Exception:
-                continue
+                skip["img_fail"] += 1; continue
 
             name = f"{comarca}_{pnoa_year}_{split}_{saved:04d}"
             save_patch(name, img, mask, split)
@@ -156,7 +160,7 @@ if __name__ == "__main__":
             if saved % 50 == 0:
                 print(f"  {saved}/{N_SAMPLES}  train={totals['train']} val={totals['val']} test={totals['test']}", flush=True)
 
-        print(f"  done: {saved} patches ({attempts} attempts)")
+        print(f"  done: {saved} patches ({attempts} attempts)  skips: {skip}")
 
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(os.path.join(OUT_DIR, "classes.txt"), "w") as f:

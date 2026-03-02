@@ -1,7 +1,12 @@
 numpy
 matplotlib
 Pillow
-rasterio 
-geopandas 
+rasterio
+geopandas
 requests
 pyproj
+torch
+torchvision
+segmentation-models-pytorch
+torchmetrics
+tensorboard
