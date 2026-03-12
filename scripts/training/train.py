@@ -8,16 +8,15 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import segmentation_models_pytorch as smp
-from torchmetrics import JaccardIndex, F1Score, Accuracy
+from torchmetrics import JaccardIndex, F1Score, Accuracy, ConfusionMatrix
 from torch.utils.tensorboard import SummaryWriter
 
 # --- CONFIG ---
 DATA_DIR   = "data/dataset"
 OUT_DIR    = "models"
 EPOCHS     = 50
-BATCH_SIZE = 8
+BATCH_SIZE = 6
 LR         = 1e-4
-IMG_SIZE   = 512
 DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -36,7 +35,6 @@ class SegDataset(Dataset):
         self.mask_dir = Path(DATA_DIR) / "masks"  / split
         self.files    = sorted(self.img_dir.glob("*.png"))
         self.img_tf   = transforms.Compose([
-            transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225]),
@@ -48,7 +46,7 @@ class SegDataset(Dataset):
     def __getitem__(self, i):
         name = self.files[i].name
         img  = Image.open(self.files[i]).convert("RGB")
-        mask = Image.open(self.mask_dir / name).resize((IMG_SIZE, IMG_SIZE), Image.NEAREST)
+        mask = Image.open(self.mask_dir / name)
         return self.img_tf(img), torch.from_numpy(np.array(mask)).long()
 
 
@@ -82,6 +80,7 @@ def compute_metrics(preds, targets, n_classes, classes):
     iou_macro    = JaccardIndex(**kwargs, average="macro")(preds, targets)
     iou_weighted = JaccardIndex(**kwargs, average="weighted")(preds, targets)
     f1_per_class = F1Score(**kwargs, average=None)(preds, targets)
+    cm           = ConfusionMatrix(**kwargs)(preds, targets).numpy()
 
     lines = [
         f"Overall Accuracy (OA) : {oa:.4f}",
@@ -91,8 +90,16 @@ def compute_metrics(preds, targets, n_classes, classes):
         "F1 per class:",
     ]
     for cls_id, f1 in enumerate(f1_per_class):
-        name = classes.get(cls_id, str(cls_id))
-        lines.append(f"  {cls_id:2d}  {name:<12} {f1:.4f}")
+        lines.append(f"  {cls_id:2d}  {classes.get(cls_id, str(cls_id)):<12} {f1:.4f}")
+
+    # Confusion matrix
+    labels = [classes.get(i, str(i)) for i in range(n_classes)]
+    col_w  = max(len(l) for l in labels) + 2
+    header = " " * col_w + "".join(f"{l:>{col_w}}" for l in labels)
+    lines += ["", "Confusion matrix (rows=real, cols=predicted):", header]
+    for i, row in enumerate(cm):
+        lines.append(f"{labels[i]:<{col_w}}" + "".join(f"{v:>{col_w}}" for v in row))
+
     return "\n".join(lines), {"oa": oa, "iou_macro": iou_macro, "iou_weighted": iou_weighted, "f1": f1_per_class}
 
 
